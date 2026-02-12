@@ -43,25 +43,48 @@ async def callback(request: Request):
     return "OK"
 
 # 4. 核心邏輯：處理圖片與 Agentic Vision
+# 新增一個字典來紀錄每個使用者最後傳送的圖片內容
+user_last_image = {}
+
+# --- 處理圖片：純接收並儲存 ---
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
-    # 下載 LINE 圖片
+    user_id = event.source.user_id
     message_content = line_bot_api.get_message_content(event.message.id)
-    input_image_bytes = io.BytesIO(message_content.content).read()
+    image_bytes = io.BytesIO(message_content.content).read()
     
-    # 立即初步回覆
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="📸 AI 正在分析圖片並標註中，請稍候..."))
+    # 將圖片存入記憶（以 user_id 為鍵）
+    user_last_image[user_id] = image_bytes
+    
+    line_bot_api.reply_message(
+        event.reply_token, 
+        TextSendMessage(text="📸 照片已就緒！\n現在請輸入指令，例如：\n「找出圖中所有貓咪」\n「這張發票的總金額是多少？」")
+    )
+
+# --- 處理文字：作為指令來觸發 Agentic Vision ---
+from linebot.models import TextMessage
+@handler.add(MessageEvent, message=TextMessage)
+def handle_text(event):
+    user_id = event.source.user_id
+    user_prompt = event.message.text
+    
+    # 檢查該使用者是否先傳過圖片
+    if user_id not in user_last_image:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="請先傳送一張圖片，我才能幫你分析喔！"))
+        return
+
+    # 取得暫存的圖片
+    input_image_bytes = user_last_image[user_id]
+    
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"🤖 正在根據指令「{user_prompt}」思考並執行中..."))
 
     try:
-        # 呼叫 Gemini 3 Agentic Vision
+        # 呼叫 Gemini 3
         response = gemini_client.models.generate_content(
             model="gemini-3-flash-preview",
             contents=[
                 types.Part.from_bytes(data=input_image_bytes, mime_type="image/jpeg"),
-                "請找出圖中的重要物件，並『務必執行程式碼』來繪製紅框標註圖片。 "
-                "【回傳規則】：不要在文字回覆中顯示任何 JSON 座標或數字代碼。 "
-                "請直接給予繁體中文的物件總結描述即可，並附上標註好的紅框圖片。"
-                "如果判斷為醫療相關的影像，可以詳細說明他可能是甚麼疾病或是任何你知道的知識"
+                f"使用者指令：{user_prompt}。請根據指令思考並執行 code_execution 來標註圖片。不要輸出 JSON，直接以繁體中文回覆結果。"
             ],
             config=types.GenerateContentConfig(
                 tools=[types.Tool(code_execution=types.ToolCodeExecution())],
@@ -72,34 +95,22 @@ def handle_image(event):
 
         text_result = ""
         annotated_image_bytes = None
-        
-        # 解析 AI 回傳的文字與圖片
         for part in response.candidates[0].content.parts:
-            if part.text:
-                # 額外過濾可能殘留的 JSON 內容
-                if "box_2d" not in part.text:
-                    text_result += part.text
+            if part.text and "box_2d" not in part.text:
+                text_result += part.text
             if part.as_image():
                 annotated_image_bytes = part.as_image().image_bytes
 
-        reply_messages = [TextSendMessage(text=text_result or "標註完成！")]
+        reply_messages = [TextSendMessage(text=text_result or "執行完畢")]
         
-        # 如果 AI 有產生圖片，處理圖片網址
         if annotated_image_bytes:
             img_id = str(uuid.uuid4())
             image_store[img_id] = annotated_image_bytes
-            # 確保 APP_DOMAIN 網址正確
             base_url = APP_DOMAIN if APP_DOMAIN.startswith("http") else f"https://{APP_DOMAIN}"
             img_url = f"{base_url}/images/{img_id}"
             reply_messages.append(ImageSendMessage(original_content_url=img_url, preview_image_url=img_url))
 
-        line_bot_api.push_message(event.source.user_id, reply_messages)
+        line_bot_api.push_message(user_id, reply_messages)
 
     except Exception as e:
-        line_bot_api.push_message(event.source.user_id, TextSendMessage(text=f"AI 分析失敗: {str(e)}"))
-
-# 5. 啟動伺服器 (Render 會調用 uvicorn，但加上這個方便本地測試)
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+        line_bot_api.push_message(user_id, TextSendMessage(text=f"執行出錯: {str(e)}"))
