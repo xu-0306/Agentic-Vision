@@ -95,7 +95,7 @@ def handle_text(event):
             ],
             config=types.GenerateContentConfig(
                 tools=[types.Tool(code_execution=types.ToolCodeExecution())],
-                thinking_config=types.ThinkingConfig(thinking_budget=2048),
+                #thinking_config=types.ThinkingConfig(thinking_budget=2048),
                 max_output_tokens=4096
             )
         )
