@@ -89,9 +89,17 @@ def handle_text(event):
         # 呼叫 Gemini 3 Agentic Vision
         response = gemini_client.models.generate_content(
             model="gemini-3-flash-preview",
+            # 修改 contents 部分
             contents=[
                 types.Part.from_bytes(data=input_image_bytes, mime_type="image/jpeg"),
-                f"使用者指令：{user_prompt}。請根據指令思考並執行 code_execution 來標註圖片。不要輸出 JSON，直接以繁體中文回覆結果。"
+                f"""你是一個具備視覺標註能力的 AI 助手。
+                使用者指令：{user_prompt}
+                
+                執行規範：
+                1. 你『必須』使用 code_execution (Python) 來處理圖片並繪製標註框。
+                2. 如果指令要求找東西，請務必在圖上畫出紅色方框。
+                3. 嚴禁只輸出數字座標或 JSON，請將結果轉化為易懂的繁體中文描述。
+                4. 如果你沒有畫圖，請解釋原因。"""
             ],
             config=types.GenerateContentConfig(
                 tools=[types.Tool(code_execution=types.ToolCodeExecution())],
