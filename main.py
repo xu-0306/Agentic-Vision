@@ -108,7 +108,7 @@ def handle_text(event):
 
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[
                 types.Part.from_bytes(data=input_image_bytes, mime_type="image/jpeg"),
                 f"""你是一個具備視覺標註能力的 AI 助手。
